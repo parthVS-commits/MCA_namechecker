@@ -3,7 +3,4 @@ pinecone-client
 streamlit
 doublemetaphone
 python-dotenv
-difflib
-pycountry
-googletrans
-typing
+
