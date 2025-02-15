@@ -4,3 +4,4 @@ streamlit
 doublemetaphone
 python-dotenv
 pycountry
+googletrans
