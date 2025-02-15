@@ -3,4 +3,4 @@ pinecone-client
 streamlit
 doublemetaphone
 python-dotenv
-
+pycountry
