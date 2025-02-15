@@ -1,0 +1,9 @@
+openai==0.28
+pinecone-client
+streamlit
+doublemetaphone
+python-dotenv
+difflib
+pycountry
+googletrans
+typing
