@@ -57,7 +57,10 @@ class TrademarkValidator:
             'tennessee', 'texas', 'utah', 'vermont', 'virginia', 'washington',
             'west virginia', 'wisconsin', 'wyoming'
         }
-        
+        self.articles = {
+            'articles': ['the', 'an', 'a','and', 'are', 'our', 'or', 'us', 'we', 'I', 'you', 'me']
+               
+        } 
         self.restricted_words = {
             'government_words': [
                 'board', 'federal', 'municipal', 'forest corporation', 'commission', 
@@ -185,6 +188,20 @@ class TrademarkValidator:
             'implies_patronage': len(restricted_matches) > 0,
             'restricted_words_found': restricted_matches
         }
+    
+    def check_articles(self, wordmark: str) -> Dict[str, bool]:
+        """Check for government patronage implications"""
+        words = wordmark.lower().split()
+        restricted_matches = []
+        
+        for word in words:
+            if word in self.articles['articles']:
+                restricted_matches.append(word)
+    
+        return {
+            'has_articles': len(restricted_matches) > 0,
+            'restricted_words_found': restricted_matches
+        }
 
     def check_similar_existing_companies(self, wordmark: str, company_names: List[str]) -> Dict[str, List[str]]:
         """Check for similarity with existing company names"""
@@ -233,7 +250,8 @@ class TrademarkValidator:
             'location_check': self.check_location_name(wordmark),
             'government_check': self.check_government_patronage(wordmark),
             'company_similarity': self.check_similar_existing_companies(wordmark, existing_companies),
-            'embassy_check': self.check_embassy_connections(wordmark)
+            'embassy_check': self.check_embassy_connections(wordmark),
+            'articles_check': self.check_articles(wordmark)
         }
         
         # Determine overall validity
@@ -241,7 +259,8 @@ class TrademarkValidator:
             not results['location_check']['is_location'],
             not results['government_check']['implies_patronage'],
             not results['company_similarity']['has_similarities'],
-            not results['embassy_check']['has_embassy_connection']
+            not results['embassy_check']['has_embassy_connection'],
+            not results['articles_check']['has_articles']
         ])
         
         results['overall_validity'] = {
@@ -269,12 +288,16 @@ class TrademarkValidator:
             
         if results['embassy_check']['has_embassy_connection']:
             messages.append(f"Invalid: Suggests embassy/consulate connection: {', '.join(results['embassy_check']['matched_terms'])}")
+
+        if results['articles_check']['has_articles']:
+            messages.append(f"Invalid: Articles/Pronouns Found")
             
         return messages
 
 def get_phonetic_representation(word):
-    primary, secondary = doublemetaphone.doublemetaphone(word)
-    return primary or secondary or word
+    word_lowercase = word.lower()
+    primary, secondary = doublemetaphone.doublemetaphone(word_lowercase)
+    return primary or secondary or word_lowercase
 
 def get_embedding(text, model="text-embedding-ada-002"):
     # [Previous implementation remains the same]
@@ -282,10 +305,13 @@ def get_embedding(text, model="text-embedding-ada-002"):
         if not text or text.isspace():
             st.error("Please enter a valid company name that is not just a suffix (like 'private limited', 'ltd', etc.)")
             return None
+        
+        normalized_text = text.lower()
+
             
         response = openai.Embedding.create(
             model=model,
-            input=[text]
+            input=[normalized_text]
         )
         return response["data"][0]["embedding"]
     except Exception as e:
@@ -442,8 +468,8 @@ def calculate_phonetic_similarity(word1, word2):
     if not word1_cleaned or not word2_cleaned:
         return 0
     
-    phonetic1 = get_phonetic_representation(word1_cleaned)
-    phonetic2 = get_phonetic_representation(word2_cleaned)
+    phonetic1 = get_phonetic_representation(word1_cleaned.lower())
+    phonetic2 = get_phonetic_representation(word2_cleaned.lower())
     return SequenceMatcher(None, phonetic1, phonetic2).ratio()
 
 def calculate_hybrid_score(phonetic_score, semantic_score, phonetic_weight=0.6, semantic_weight=0.4):
@@ -459,7 +485,9 @@ def check_multiple_phonetic_matches(wordmark, index, model="text-embedding-ada-0
         if not cleaned_wordmark:
             st.error("Please enter a valid company name that is not just a suffix (like 'private limited', 'ltd', etc.)")
             return None
-            
+              
+        cleaned_wordmark = cleaned_wordmark.lower()
+     
         phonetic_representation = get_phonetic_representation(cleaned_wordmark)
         input_embedding = get_embedding(cleaned_wordmark)
 
@@ -479,7 +507,7 @@ def check_multiple_phonetic_matches(wordmark, index, model="text-embedding-ada-0
             stored_phonetic = match["metadata"].get("phonetic_representation", "")
 
             # Calculate similarity using cleaned names
-            phonetic_score = calculate_phonetic_similarity(cleaned_wordmark, stored_wordmark)
+            phonetic_score = calculate_phonetic_similarity(cleaned_wordmark, stored_wordmark.lower())
             semantic_score = match["score"]
             hybrid_score = calculate_hybrid_score(phonetic_score, semantic_score)
 
@@ -728,6 +756,13 @@ def main():
                 st.write(f"- Contains embassy-related terms: {', '.join(validation_results['embassy_check']['matched_terms'])}")
             else:
                 st.write("- No embassy/consulate connections found")
+
+            st.write("\n5. **Artcles/Pronouns Check:**")
+            if validation_results['articles_check']['has_articles']:
+                st.write(f"- Contains articles/pronouns")
+            else:
+                st.write("- No articles/pronouns found")
+    
 
 if __name__ == "__main__":
     main()
