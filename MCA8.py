@@ -248,7 +248,7 @@ class TrademarkValidator:
     def check_embassy_connections(self, wordmark: str) -> Dict[str, bool]:
         """Check for connections with foreign embassies/consulates"""
         embassy_related_terms = {
-            'embassy', 'diplomatic', 'ambassador', 'diplomatic mission'
+            'embassy', 'diplomatic', 'ambassador', 'diplomatic mission', 
         }
         
         words = wordmark.lower().split()
