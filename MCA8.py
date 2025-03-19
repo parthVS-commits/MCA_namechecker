@@ -22,7 +22,8 @@ openai.api_key = os.environ["OPENAI_API_KEY"]
 pc = pinecone.Pinecone(api_key=os.environ["PINECONE_API_KEY"])
 
 try:
-    trademark_index = pc.Index("mca-data-new")
+    # Update this line to use the new index name
+    trademark_index = pc.Index("mca-scraped-final1")
 except Exception as e:
     st.error(f"Failed to connect to Pinecone: {str(e)}")
 
@@ -190,17 +191,39 @@ class TrademarkValidator:
         }
     
     def check_articles(self, wordmark: str) -> Dict[str, bool]:
-        """Check for government patronage implications"""
+        """
+        Check if the wordmark ONLY contains articles/pronouns
+        Only flag as invalid if the entire wordmark is just articles/pronouns
+        """
+        if not wordmark:
+            return {
+                'has_articles': False,
+                'restricted_words_found': []
+            }
+            
         words = wordmark.lower().split()
-        restricted_matches = []
         
-        for word in words:
-            if word in self.articles['articles']:
-                restricted_matches.append(word)
-    
+        # If the wordmark has multiple words, check if ALL words are articles/pronouns
+        if len(words) > 0:
+            restricted_matches = []
+            
+            # Check each word
+            for word in words:
+                if word in self.articles['articles']:
+                    restricted_matches.append(word)
+            
+            # Only flag as invalid if ALL words are articles/pronouns
+            all_words_are_articles = len(restricted_matches) == len(words)
+            
+            return {
+                'has_articles': all_words_are_articles,
+                'restricted_words_found': restricted_matches if all_words_are_articles else []
+            }
+        
+        # Single word case - check if it's in the articles list
         return {
-            'has_articles': len(restricted_matches) > 0,
-            'restricted_words_found': restricted_matches
+            'has_articles': wordmark.lower() in self.articles['articles'],
+            'restricted_words_found': [wordmark.lower()] if wordmark.lower() in self.articles['articles'] else []
         }
 
     def check_similar_existing_companies(self, wordmark: str, company_names: List[str]) -> Dict[str, List[str]]:
@@ -225,7 +248,7 @@ class TrademarkValidator:
     def check_embassy_connections(self, wordmark: str) -> Dict[str, bool]:
         """Check for connections with foreign embassies/consulates"""
         embassy_related_terms = {
-            'embassy', 'consulate', 'diplomatic', 'consul', 'ambassador', 'diplomatic mission'
+            'embassy', 'diplomatic', 'ambassador', 'diplomatic mission'
         }
         
         words = wordmark.lower().split()
@@ -299,7 +322,7 @@ def get_phonetic_representation(word):
     primary, secondary = doublemetaphone.doublemetaphone(word_lowercase)
     return primary or secondary or word_lowercase
 
-def get_embedding(text, model="text-embedding-ada-002"):
+def get_embedding(text, model="text-embedding-3-small"):
     # [Previous implementation remains the same]
     try:
         if not text or text.isspace():
@@ -475,7 +498,7 @@ def calculate_phonetic_similarity(word1, word2):
 def calculate_hybrid_score(phonetic_score, semantic_score, phonetic_weight=0.6, semantic_weight=0.4):
     return (phonetic_weight * phonetic_score) + (semantic_weight * semantic_score)
 
-def check_multiple_phonetic_matches(wordmark, index, model="text-embedding-ada-002", namespace="default"):
+def check_multiple_phonetic_matches(wordmark, index, model="text-embedding-ada-002", namespace=""):
     try:
         # Initialize validator
         validator = TrademarkValidator()
@@ -525,7 +548,72 @@ def check_multiple_phonetic_matches(wordmark, index, model="text-embedding-ada-0
     except Exception as e:
         st.error(f"Error checking phonetic matches: {str(e)}")
         return None
-
+    
+def test_exact_match_in_pinecone(wordmark, index, namespace="default"):
+    """
+    Function to test if an exact match exists in the Pinecone index
+    by sampling records and checking string equality
+    """
+    try:
+        # Clean the wordmark
+        validator = TrademarkValidator()
+        cleaned_wordmark = validator.remove_suffix(wordmark)
+        if not cleaned_wordmark:
+            return False, None
+            
+        cleaned_wordmark = cleaned_wordmark.lower().strip()
+        
+        # Query with a small random vector just to get some results
+        import random
+        import numpy as np
+        
+        # Create a random unit vector with correct dimensions
+        random_vector = np.random.randn(1536)  # OpenAI embeddings are 1536-dimensional
+        random_vector = random_vector / np.linalg.norm(random_vector)
+        random_vector = random_vector.tolist()
+        
+        # Get a sample of records from the index
+        st.write("DEBUG: Attempting random vector query to sample database")
+        results = index.query(
+            vector=random_vector,
+            top_k=100,  # Get a reasonable sample
+            include_metadata=True,
+            namespace=namespace
+        )
+        
+        st.write(f"DEBUG: Random query returned {len(results['matches'])} records")
+        
+        # Check if any exact matches
+        exact_matches = []
+        for match in results["matches"]:
+            stored_name = match["metadata"].get("original_data", "")
+            cleaned_stored_name = validator.remove_suffix(stored_name)
+            if cleaned_stored_name:
+                cleaned_stored_name = cleaned_stored_name.lower().strip()
+                
+                # Check for exact match
+                if cleaned_stored_name == cleaned_wordmark:
+                    exact_matches.append(match["metadata"])
+                
+                # Also check for high similarity
+                similarity = calculate_phonetic_similarity(cleaned_wordmark, cleaned_stored_name)
+                if similarity > 0.9:  # High threshold for phonetic similarity
+                    exact_matches.append({
+                        "metadata": match["metadata"],
+                        "similarity": similarity,
+                        "type": "phonetic_match"
+                    })
+                    
+        if exact_matches:
+            return True, exact_matches
+                
+        return False, None
+    except Exception as e:
+        st.error(f"Error in exact match test: {str(e)}")
+        import traceback
+        st.error(f"Traceback: {traceback.format_exc()}")
+        return False, None
+    
 def suggest_similar_names(wordmark):
     try:
         response = openai.ChatCompletion.create(
@@ -642,11 +730,15 @@ def main():
     with col1:
         wordmark = st.text_input("Enter the Wordmark:", "")
 
+    # Add this in your main() function, replacing the existing database check section:
+
+        # Replace the existing validation button code in main() with this:
+
     if st.button("Validate"):
         if not wordmark:
             st.warning("Please enter the Wordmark.")
             return
-            
+                
         # First check if input is just a suffix
         cleaned_name = validator.remove_suffix(wordmark)
         if not cleaned_name:
@@ -662,7 +754,7 @@ def main():
             st.error("### ⚠️ Validation Issues Found!")
             for message in validation_results['overall_validity']['validation_messages']:
                 st.warning(message)
-                
+                    
             if validation_results['translation_check'].get('has_meaning'):
                 with st.expander("Translation Details"):
                     if validation_results['translation_check'].get('english_meaning'):
@@ -679,10 +771,19 @@ def main():
                     st.write(f"- {suggestion}")
             else:
                 st.info("No unique alternative suggestions could be generated.")
-    
+        
+        # Get the correct namespace
+        try:
+            index_stats = trademark_index.describe_index_stats()
+            namespaces = list(index_stats.get('namespaces', {}).keys())
+            namespace_to_use = namespaces[0] if namespaces else ""
+        except Exception as e:
+            st.error(f"Failed to connect to Pinecone: {str(e)}")
+            return
+        
         # Then: Check for similar trademarks in database
         with st.spinner("Checking MCA database..."):
-            matches = check_multiple_phonetic_matches(wordmark, trademark_index)
+            matches = check_multiple_phonetic_matches(wordmark, trademark_index, namespace=namespace_to_use)
 
         if matches:
             # Filter high-risk matches based on hybrid score threshold
@@ -724,7 +825,7 @@ def main():
                 st.success("✅ Validation Passed! No issues found with the MCA Name.")
             else:
                 st.info("No similar MCA Names found in database, but other validation issues exist.")
-
+                
         # Display detailed validation report
         with st.expander("View Detailed Validation Report"):
             st.write("### Validation Checks Performed:")
